@@ -1,0 +1,13 @@
+#!/usr/bin/env ruby
+
+require 'bundler/setup'
+Bundler.require
+
+require_relative '../lib/pocketcast_cli'
+
+Signal.trap("INT") do
+  puts "\nGoodbye!"
+  exit
+end
+
+PocketcastCLI::CLI.start(ARGV) 
