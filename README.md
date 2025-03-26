@@ -38,7 +38,7 @@ Watch as the transcript automatically follows along with the audio:
 
 ## Requirements
 
-- macOS (uses `afplay` for audio playback)
+- FFMPEG
 - Ruby 3.0+
 - [llm-gemini](https://github.com/simonw/llm-gemini) for transcription
 - ffmpeg for audio processing and seeking
