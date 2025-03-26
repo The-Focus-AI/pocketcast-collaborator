@@ -1,3 +1,5 @@
+require_relative 'commands/transcribe'
+
 module PocketcastCLI
   class CLI < Thor
     def initialize(*args)
@@ -43,6 +45,86 @@ module PocketcastCLI
     desc "version", "Show version"
     def version
       puts PocketcastCLI::VERSION
+    end
+
+    desc "transcribe EPISODE_ID", "Transcribe an episode's audio to text"
+    def transcribe(episode_id)
+      episode = find_episode(episode_id)
+      return unless episode
+      
+      unless episode.downloaded?
+        say "Episode must be downloaded first", :red
+        return
+      end
+      
+      say "Starting transcription of '#{episode.title}'..."
+      say "Running: llm -m gemini-2.5-pro-exp-03-25 transcribe..."
+      say "This may take a while. Waiting for first token..."
+      
+      Commands::Transcribe.new(episode).execute
+      
+      transcription = Commands::Transcribe.new(episode).current.symbolize_keys!
+
+      say("We have #{transcription[:items].length} items")
+    end
+
+    desc "load EPISODE_ID", "Load a transcript for an episode"
+    def load(episode_id)
+      episode = find_episode(episode_id)
+      return unless episode
+      puts Commands::Transcribe.new(episode).current
+    end
+
+    desc "play EPISODE_ID", "Play an episode directly"
+    def play(episode_id)
+      # Sync episodes first if needed
+      if @pc.episodes.empty?
+        say "Syncing episodes from Pocketcast...", :yellow
+        @pc.sync_recent_episodes
+      end
+
+      episode = find_episode(episode_id)
+      return unless episode
+      
+      unless episode.downloaded?
+        say "Episode must be downloaded first. Downloading...", :yellow
+        
+        begin
+          progress_bar = TTY::ProgressBar.new(
+            "[:bar] :percent",
+            total: 100,
+            width: TTY::Screen.width - 10,
+            complete: "▓",
+            incomplete: "░"
+          )
+          
+          @pc.download_episode(episode) do |progress|
+            progress_bar.current = progress
+          end
+          
+          say "\nDownload complete!", :green
+        rescue => e
+          say "Error downloading episode:", :red
+          say e.message, :red
+          return
+        end
+      end
+      
+      # Start the player
+      player = PodcastPlayer.new(episode)
+      player.run
+    end
+
+    private
+
+    def find_episode(uuid_prefix)
+      # Find episode where UUID starts with the given prefix
+      episode = @pc.episodes.values.find { |e| e.uuid.start_with?(uuid_prefix) }
+      unless episode
+        say "Episode not found with UUID starting with: #{uuid_prefix}", :red
+        return nil
+      end
+      episode
     end
   end
 end 

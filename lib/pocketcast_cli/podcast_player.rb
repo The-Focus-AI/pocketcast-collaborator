@@ -4,6 +4,7 @@ require 'tty-reader'
 require 'pastel'
 require 'open3'
 require 'timeout'
+require 'json'
 
 module PocketcastCLI
   class PodcastPlayer
@@ -20,29 +21,38 @@ module PocketcastCLI
       @player_type = nil
       @error_message = nil
       @debug_message = nil
+      @start_time = nil
+      
+      # Transcript support
+      @transcript_path = File.join('data/transcripts', "#{@episode.filename.sub('.mp3', '.json')}")
+      @transcriber = Commands::Transcribe.new(@episode)
+      @transcript = nil
+      @current_transcript_index = 0
+      @transcript_scroll_offset = 0
+      @last_check_time = nil
+      
+      # UI layout tracking
+      @player_height = 8  # Height for player controls
     end
 
     def run
       render
       setup_player
       
+      # Start transcription if needed
+      start_transcription if should_transcribe?
+      
       loop do
         char = @reader.read_keypress(nonblock: true)
         if char
-          case char
-          when "\r", "\n"  # Enter
-            toggle_playback
-          when "\e[C"  # Right arrow
-            seek(30)
-          when "\e[D"  # Left arrow
-            seek(-30)
-          when "q", "\u0003"  # q or Ctrl-C
-            @exit_requested = true
-          end
+          handle_keyboard_event(char)
         end
         
         # Update playback status
         update_playback_status
+        
+        # Check transcription progress
+        update_transcription_progress
         
         # Render screen
         render
@@ -51,47 +61,44 @@ module PocketcastCLI
         sleep 0.1  # Prevent CPU spinning
       end
       
+      # Ensure everything is cleaned up
+      stop_playback
       cleanup_player
+      cleanup_transcription
+      print @cursor.show  # Show the cursor before exiting
     end
 
-    private
-
-    def render
-      width = TTY::Screen.width
-      height = TTY::Screen.height
-      
-      # Split screen in half
-      left_width = width / 2
-      right_width = width - left_width - 1
-      
-      # Clear screen and hide cursor
-      print @cursor.hide
-      print @cursor.clear_screen
-      print @cursor.move_to(0, 0)
-      
-      # Calculate content areas
-      content_height = height - 3  # Leave room for status bar
-      player_height = 8  # Height of player controls section
-      transcript_height = content_height - player_height
-      
-      # Render metadata (left side)
-      render_metadata(left_width, content_height)
-      
-      # Draw vertical separator
-      content_height.times do |i|
-        print @cursor.move_to(left_width, i + 1)
-        print "│"
+    def handle_keyboard_event(char)
+      case char
+      when "\r", "\n"  # Enter
+        toggle_playback
+      when "\e[C"  # Right arrow
+        seek_forward
+      when "\e[D"  # Left arrow
+        seek_backward
+      when "\e[A"  # Up arrow
+        move_to_previous_segment if @transcript
+      when "\e[B"  # Down arrow
+        move_to_next_segment if @transcript
+      when "\e[5~"  # Page Up
+        page_transcript_up if @transcript
+      when "\e[6~"  # Page Down
+        page_transcript_down if @transcript
+      when "q", "\u0003"  # q or Ctrl-C
+        stop_playback if @playing
+        @exit_requested = true
       end
-      
-      # Render player and transcript (right side)
-      render_player(left_width + 1, player_height, right_width)
-      render_transcript(left_width + 1, player_height + 1, right_width, transcript_height)
-      
-      # Render status bar
-      render_status_bar(width, height)
-      
-      # Position cursor at bottom
-      print @cursor.move_to(0, height - 1)
+    end
+
+    def page_transcript_up
+      visible_lines = TTY::Screen.height - @player_height - 3  # Account for player and status bar
+      @transcript_scroll_offset = [@transcript_scroll_offset - visible_lines, 0].max
+    end
+
+    def page_transcript_down
+      visible_lines = TTY::Screen.height - @player_height - 3
+      max_offset = @transcript.length - visible_lines
+      @transcript_scroll_offset = [@transcript_scroll_offset + visible_lines, max_offset].min
     end
 
     def render_metadata(width, height)
@@ -144,9 +151,15 @@ module PocketcastCLI
     def render_player(x, height, width)
       current_row = 1  # Start after top margin
       
-      # Player title
+      # Player title with transcription status
       print @cursor.move_to(x, current_row)
-      puts @pastel.bold("Audio Player").center(width)
+      title = "Audio Player"
+      if !@transcriber.loaded? && @transcriber.started?
+        title += " " + @pastel.yellow("(Transcribing...)")
+      elsif @transcriber.loaded?
+        title += " " + @pastel.cyan("(Transcript Available)")
+      end
+      puts @pastel.bold(title).center(width)
       current_row += 2
       
       # Show any error messages
@@ -191,13 +204,79 @@ module PocketcastCLI
     end
 
     def render_transcript(x, y, width, height)
-      print @cursor.move_to(x, y)
-      puts "Transcript:"
-      puts "─" * width
+      return unless @transcript
       
-      # TODO: Implement transcript display once we have transcript data
-      print @cursor.move_to(x, y + 2)
-      puts @pastel.dim("Transcript not available")
+      # Find current transcript segment based on playback position
+      current_index = @transcript.rindex { |t| t[:timestamp] <= @current_position } || 0
+      @current_transcript_index = current_index
+      
+      # Calculate visible range
+      visible_lines = height
+      preferred_position = visible_lines / 3  # Keep current line in top third
+      
+      # Adjust scroll offset to keep current line in preferred position
+      target_scroll = [current_index - preferred_position, 0].max
+      @transcript_scroll_offset = [
+        target_scroll,
+        @transcript.length - visible_lines
+      ].min
+      @transcript_scroll_offset = [0, @transcript_scroll_offset].max
+      
+      # Track how many screen lines we've used
+      screen_line = 0
+      
+      # Display transcript lines
+      visible_lines.times do |i|
+        break if screen_line >= visible_lines
+        
+        line_index = @transcript_scroll_offset + i
+        break if line_index >= @transcript.length
+        
+        transcript_line = @transcript[line_index]
+        timestamp = Time.at(transcript_line[:timestamp]).utc.strftime("%M:%S")
+        
+        # Format line with timestamp
+        text = transcript_line[:text]
+        timestamp_width = 6  # "MM:SS "
+        text_width = width - timestamp_width
+        
+        # Word wrap the text
+        wrapped_lines = wrap_text(text, text_width)
+        
+        wrapped_lines.each_with_index do |wrapped_line, wrap_index|
+          break if screen_line >= visible_lines
+          
+          # Move to correct position and print line
+          print @cursor.move_to(x, y + screen_line)
+          
+          # For first line of wrapped text, include timestamp
+          line = if wrap_index == 0
+            "#{timestamp} #{wrapped_line}"
+          else
+            " " * timestamp_width + wrapped_line
+          end
+          
+          if line_index == current_index
+            # Highlight current line
+            print @pastel.bold.bright_white.on_blue(line.ljust(width))
+          elsif line_index < current_index
+            # Dim past lines
+            print @pastel.dim(line.ljust(width))
+          else
+            # Normal text for future lines
+            print line.ljust(width)
+          end
+          
+          screen_line += 1
+        end
+      end
+      
+      # Clear any remaining lines
+      while screen_line < visible_lines
+        print @cursor.move_to(x, y + screen_line)
+        print " " * width
+        screen_line += 1
+      end
     end
 
     def render_status_bar(width, height)
@@ -207,7 +286,9 @@ module PocketcastCLI
       status = [
         "Enter: Play/Pause",
         "←/→: Seek 30s",
-        "q: Back to Episodes"
+        "↑/↓: Navigate",
+        "PgUp/PgDn: Page",
+        "q: Back"
       ].join(" | ")
       
       print status.center(width)
@@ -216,9 +297,9 @@ module PocketcastCLI
     def setup_player
       return unless @episode.downloaded?
       
-      @player_cmd = "afplay"
-      @player_type = :afplay
-      @debug_message = "Using afplay for playback"
+      @player_cmd = "ffplay"
+      @player_type = :ffplay
+      @debug_message = "Using ffplay for playback"
       
       # Verify the audio file exists and is readable
       unless File.exist?(@episode.download_path)
@@ -275,107 +356,95 @@ module PocketcastCLI
     end
 
     def toggle_playback
-      return unless @episode.downloaded?
-      
       if @playing
-        cleanup_player
+        stop_playback
         @playing = false
       else
-        @playing = true  # Set playing state before starting playback
-        unless start_playback
-          # If playback failed, reset playing state
-          @playing = false
-        end
+        @playing = start_playback
       end
     end
 
     def start_playback
       return false unless @episode.downloaded?
-      
-      # Make absolutely sure old player is cleaned up
-      cleanup_player if @player_pid
-      
-      # Calculate start time based on current position
-      start_time = Time.now
-      
-      # Build command - afplay doesn't support seeking, so we'll handle that in the UI
-      cmd = "#{@player_cmd} '#{@episode.download_path}'"
-      
-      # Log the command being run
-      @debug_message = "Running: #{cmd}"
-      
+
       begin
-        # Start the player process
-        stdin, stdout, stderr, thread = Open3.popen3(cmd)
-        @player_pid = thread.pid
+        # Kill any existing player process
+        stop_playback
+
+        # Start ffplay in its own process group
+        cmd = "ffplay -nodisp -autoexit -ss #{@current_position} '#{@episode.download_path}' 2>/dev/null"
+        @player_pid = Process.spawn(cmd, pgroup: true)
+        @start_time = Time.now - @current_position
         
-        # Monitor process in a single thread
-        @player_thread = Thread.new do
-          begin
-            # Wait for process to complete
-            status = thread.value
-            
-            # Check if process exited successfully
-            unless status.success?
-              @error_message = "Player exited with status #{status.exitstatus}"
-              @playing = false
-            end
-          ensure
-            # Clean up streams
-            [stdin, stdout, stderr].each { |s| s.close rescue nil }
-            
-            # Update state when process ends
-            @playing = false
-            @player_pid = nil
-            @position_thread&.kill
-            @position_thread = nil
-          end
-        end
-        
-        # Start a thread to track playback position
-        @position_thread&.kill
+        # Start a thread to update the position
         @position_thread = Thread.new do
           while @playing
-            sleep 1
-            elapsed = Time.now - start_time
-            @current_position = elapsed.to_i if @current_position < @duration
+            sleep 0.1
+            new_position = (Time.now - @start_time).to_i
+            
+            # Check if we've reached the end of the file
+            if new_position >= @duration
+              @current_position = @duration
+              @playing = false
+              stop_playback
+              break
+            end
+            
+            @current_position = new_position
           end
         end
-        @position_thread.abort_on_exception = false
-        
-        return true  # Successfully started
-        
+
+        true
       rescue => e
-        @error_message = "Failed to start player: #{e.message}"
-        @playing = false
-        return false
+        @error_message = "Playback error: #{e.message}"
+        false
       end
     end
 
-    def seek(seconds)
-      return unless @episode.downloaded?
-      
-      new_position = @current_position + seconds
-      new_position = 0 if new_position < 0
-      new_position = @duration if new_position > @duration
-      
-      @current_position = new_position
-      
-      # Always restart playback if playing
-      if @playing
-        was_playing = true
-        cleanup_player
-        start_playback
-        @playing = was_playing
+    def stop_playback
+      if @player_pid
+        begin
+          # Kill the entire process group
+          Process.kill('-TERM', @player_pid)
+          
+          # Wait for process to terminate with timeout
+          Timeout.timeout(2) do
+            Process.wait(@player_pid)
+          end
+        rescue Errno::ESRCH, Errno::ECHILD
+          # Process already terminated
+        rescue Timeout::Error
+          # Force kill if timeout
+          begin
+            Process.kill('-KILL', @player_pid)
+          rescue Errno::ESRCH
+            # Process already gone
+          end
+        end
+        @player_pid = nil
       end
+      
+      if @position_thread
+        @position_thread.kill
+        @position_thread = nil
+      end
+    end
+
+    def seek_forward
+      return unless @playing
+      @current_position += 30
+      restart_playback
+    end
+
+    def seek_backward
+      return unless @playing
+      @current_position = [@current_position - 30, 0].max
+      restart_playback
     end
 
     def restart_playback
-      return unless @playing
-      @playing = false
-      cleanup_player
-      start_playback
-      @playing = true
+      stop_playback
+      @playing = start_playback
     end
 
     def format_duration(seconds)
@@ -402,6 +471,115 @@ module PocketcastCLI
           @position_thread&.kill
           @position_thread = nil
         end
+      end
+    end
+
+    def move_to_previous_segment
+      return unless @transcript && @current_transcript_index > 0
+      @current_transcript_index -= 1
+      @current_position = @transcript[@current_transcript_index][:timestamp]
+      restart_playback if @playing
+    end
+
+    def move_to_next_segment
+      return unless @transcript && @current_transcript_index < @transcript.length - 1
+      @current_transcript_index += 1
+      @current_position = @transcript[@current_transcript_index][:timestamp]
+      restart_playback if @playing
+    end
+
+    def render
+      # Clear screen and hide cursor
+      print @cursor.clear_screen
+      print @cursor.hide
+      
+      # Get terminal dimensions
+      width = TTY::Screen.width
+      height = TTY::Screen.height
+      
+      # Calculate layout
+      player_y = 0
+      transcript_y = @player_height + 1
+      transcript_height = height - @player_height - 3  # Account for status bar
+      
+      # Render components
+      render_player(0, player_y, width)
+      render_transcript(0, transcript_y, width, transcript_height) if @transcript
+      render_status_bar(width, height)
+    end
+
+    def should_transcribe?
+      return false unless @episode.downloaded? # Need audio file
+      !@transcriber.loaded? && !@transcriber.started?
+    end
+
+    def start_transcription
+      # Create a new transcriber
+      @transcriber = Commands::Transcribe.new(@episode)
+      @last_check_time = Time.now - 2  # Force immediate check
+      
+      # Run execute in a background thread
+      @transcription_thread = Thread.new do
+        @transcriber.execute
+      end
+
+      @transcriber = Commands::Transcribe.new(@episode)
+    end
+
+    def update_transcription_progress
+      return if @transcriber.loaded?  # Stop checking if transcript is complete
+      return unless @episode.downloaded?
+
+      # Check every second while transcribing
+      if !@last_check_time || Time.now - @last_check_time >= 1
+        @last_check_time = Time.now
+        
+        if current = @transcriber.current
+          if current["items"]
+            @transcript = current["items"].map do |item|
+              # Convert timestamp to seconds
+              time_parts = item['timestamp'].split(':').map(&:to_i)
+              seconds = time_parts[0] * 60 + time_parts[1]
+              {
+                text: item['text'],
+                timestamp: seconds
+              }
+            end
+          end
+        end
+      end
+    end
+
+    def wrap_text(text, width)
+      # Split into words
+      words = text.split(/\s+/)
+      lines = []
+      current_line = []
+      current_length = 0
+      
+      words.each do |word|
+        # Check if adding this word would exceed width
+        word_length = word.length + (current_line.empty? ? 0 : 1)  # +1 for space
+        if current_length + word_length <= width
+          current_line << word
+          current_length += word_length
+        else
+          # Start new line
+          lines << current_line.join(' ') unless current_line.empty?
+          current_line = [word]
+          current_length = word.length
+        end
+      end
+      
+      # Add final line
+      lines << current_line.join(' ') unless current_line.empty?
+      lines
+    end
+
+    def cleanup_transcription
+      if @transcription_thread
+        @transcription_thread.kill
+        @transcription_thread = nil
       end
     end
   end

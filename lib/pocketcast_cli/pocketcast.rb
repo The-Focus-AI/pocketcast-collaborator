@@ -71,7 +71,6 @@ module PocketcastCLI
       # Ensure all data directories exist
       %w[
         data
-        data/api_results
         data/notes
         data/transcripts
         data/entities
@@ -189,7 +188,6 @@ module PocketcastCLI
       })
 
       data = JSON.parse(response.body)
-      save_api_result("notes_#{episode.uuid}", data)
       episode.instance_variable_set(:@notes, data['show_notes'])
     rescue => e
       puts "Error fetching notes for #{episode.title}: #{e.message}"
@@ -233,7 +231,6 @@ module PocketcastCLI
         } )
 
         data = JSON.parse(response.body)
-        save_api_result('login', data)
         @token = data['token']
         @email = data['email']
         @user_uuid = data['uuid']
@@ -255,8 +252,6 @@ module PocketcastCLI
       })
 
       data = JSON.parse(response.body)
-      save_api_result('history', data)
-
       data['episodes'].map do |episode_data|
         Episode.new(episode_data)
       end
@@ -272,8 +267,6 @@ module PocketcastCLI
       })
 
       data = JSON.parse(response.body)
-      save_api_result('starred', data)
-
       data['episodes'].map do |episode_data|
         Episode.new(episode_data)
       end
@@ -297,11 +290,6 @@ module PocketcastCLI
     def save_episode_database
       data = @episodes.transform_values(&:to_h)
       File.write('data/episodes.json', JSON.pretty_generate(data))
-    end
-
-    def save_api_result(endpoint, data)
-      filename = "data/api_results/#{endpoint}_#{Time.now.strftime('%Y%m%d_%H%M%S')}.json"
-      File.write(filename, JSON.pretty_generate(data))
     end
   end
 end 

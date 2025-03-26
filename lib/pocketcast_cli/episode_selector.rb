@@ -7,7 +7,8 @@ module PocketcastCLI
   class EpisodeSelector
     SORT_OPTIONS = {
       date_published: "Date Published",
-      list_order: "List Order"
+      list_order: "List Order",
+      duration: "Duration"
     }
 
     def initialize(pocketcast)
@@ -30,6 +31,14 @@ module PocketcastCLI
       @loading_notes = false
       @notes_thread = nil
       
+      # Track window dimensions
+      @last_width = TTY::Screen.width
+      @last_height = TTY::Screen.height
+      
+      # Track transcription status check
+      @last_check_time = Time.now
+      @check_interval = 1  # Check every second
+      
       update_filtered_episodes
     end
 
@@ -37,7 +46,29 @@ module PocketcastCLI
       render
       loop do
         handle_input
-        render
+        check_window_resize
+        check_transcription_status
+        render if @needs_render
+        @needs_render = false
+        sleep 0.1  # Don't hammer the CPU
+      end
+    end
+
+    def check_window_resize
+      current_width = TTY::Screen.width
+      current_height = TTY::Screen.height
+      
+      if current_width != @last_width || current_height != @last_height
+        @last_width = current_width
+        @last_height = current_height
+        
+        # Adjust scroll offset if needed to keep selection in view
+        visible_height = current_height - 6  # Account for headers and status bar
+        if @selected_index >= @scroll_offset + visible_height
+          @scroll_offset = @selected_index - visible_height + 1
+        end
+        
+        @needs_render = true
       end
     end
 
@@ -103,14 +134,16 @@ module PocketcastCLI
         
         # Format date and title
         date = episode.published_at&.strftime("%Y-%m-%d") || "--"
+        uuid = episode.uuid.to_s[0, 8]  # Show first 8 chars of UUID
         title = episode.title.to_s
         
         # Calculate available width for title
-        title_width = width - date.length - 3  # 3 for spacing and cursor
-        title = title[0, title_width].ljust(title_width)
+        uuid_section = " [#{uuid}]"
+        title_width = width - date.length - uuid_section.length - 3  # 3 for spacing and cursor
+        title = title[0, title_width]
         
-        # Combine parts
-        line = "#{date} #{title}"
+        # Combine parts with UUID on the right
+        line = "#{date} #{title.ljust(title_width)}#{uuid_section}"
         
         if relative_idx == @selected_index
           print @pastel.bold.bright_white.on_blue(line)
@@ -162,6 +195,13 @@ module PocketcastCLI
       status << @pastel.green("Downloaded") if current_episode.downloaded?
       status << @pastel.yellow("Not Downloaded") unless current_episode.downloaded?
       status << @pastel.yellow("★ Starred") if current_episode.starred?
+      
+      # Check for transcript
+      transcript_path = File.join('data/transcripts', "#{current_episode.filename.sub('.mp3', '.json')}")
+      if File.exist?(transcript_path)
+        status << @pastel.cyan("📝 Transcribed")
+      end
+      
       puts status.join(" | ")[0, width]
       current_row += 1
       
@@ -273,26 +313,35 @@ module PocketcastCLI
       case char
       when "\e[A" # Up arrow
         move_selection(-1)
+        @needs_render = true
       when "\e[B" # Down arrow
         move_selection(1)
+        @needs_render = true
       when "\e[5~" # Page up
         move_selection(-10)
+        @needs_render = true
       when "\e[6~" # Page down
         move_selection(10)
+        @needs_render = true
       when "\r", "\n" # Enter
         view_podcast_info if current_episode
+        @needs_render = true
       when "q", "\u0003" # q or Ctrl-C
         exit
       when "s"
         @filter_type = @filter_type == :starred ? :all : :starred
         reset_selection
         update_filtered_episodes
+        @needs_render = true
       when "t"
         cycle_sort_order
+        @needs_render = true
       when "d"
         download_current if current_episode
+        @needs_render = true
       when "/"
         enter_search_mode
+        @needs_render = true
       end
     end
 
@@ -326,6 +375,18 @@ module PocketcastCLI
       
       search_buffer = ""
       loop do
+        # Check for window resize
+        check_window_resize
+        if @needs_render
+          render
+          # Restore search prompt and cursor
+          height = TTY::Screen.height  # Get new height after resize
+          print @cursor.move_to(0, height - 1)
+          print "Search: #{search_buffer}"
+          print @cursor.show
+          @needs_render = false
+        end
+        
         # Clear line and show current search
         print @cursor.move_to(8, height - 1)
         print " " * (width - 8)  # Clear rest of line
@@ -398,6 +459,7 @@ module PocketcastCLI
       return if new_index < 0 || new_index >= @filtered_episodes.length
       
       @selected_index = new_index
+      @needs_render = true
       
       # Adjust scroll if selection would be off screen
       visible_height = TTY::Screen.height - 6  # Account for headers and status bar
@@ -414,6 +476,7 @@ module PocketcastCLI
     def reset_selection
       @selected_index = 0
       @scroll_offset = 0
+      @needs_render = true
     end
 
     def update_filtered_episodes
@@ -443,6 +506,8 @@ module PocketcastCLI
         episodes.sort_by { |e| e.published_at || Time.at(0) }.reverse
       when :list_order
         @original_order || episodes
+      when :duration
+        episodes.sort_by { |e| e.duration || 0 }
       end
     end
 
@@ -501,6 +566,24 @@ module PocketcastCLI
       # Start the player
       player = PodcastPlayer.new(current_episode)
       player.run
+    end
+
+    def check_transcription_status
+      return unless Time.now - @last_check_time >= @check_interval
+      
+      if current_episode
+        transcript_path = File.join('data/transcripts', "#{current_episode.filename.sub('.mp3', '.json')}")
+        if File.exist?(transcript_path)
+          # Check if file is being written to
+          size = File.size(transcript_path)
+          sleep 0.1
+          if File.size(transcript_path) != size
+            @needs_render = true
+          end
+        end
+      end
+      
+      @last_check_time = Time.now
     end
 
     private
