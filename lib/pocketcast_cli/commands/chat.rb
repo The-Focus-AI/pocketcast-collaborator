@@ -87,52 +87,35 @@ module PocketcastCLI
             # Prepare command
             cmd = if chat_history.empty?
               # First question - use full transcript
-              "cat #{@transcript_path} | llm -s \"#{question}\""
+              "cat #{@transcript_path} | llm \"#{question}\""
             else
               # Follow-up question - use chat context
-              "llm -c -s \"#{question}\""
+              "llm -c \"#{question}\""
             end
+
+            puts "Executing command: #{cmd}"
             
             # Execute command with streaming output
             begin
               response = ""
-              first_output = false
               spinner = TTY::Spinner.new("[:spinner] Thinking...", format: :dots)
-              
-              # Start spinner in a separate thread
-              spinner_thread = Thread.new do
-                spinner.auto_spin
-              end
-              
+              spinner.auto_spin
+
               Open3.popen3(cmd) do |stdin, stdout, stderr, wait_thr|
-                # Read output as it comes
-                while line = stdout.gets
-                  # Stop spinner on first output
-                  unless first_output
-                    spinner.stop
-                    spinner_thread.kill
-                    first_output = true
-                  end
-                  
-                  # Print the line
-                  print line
-                  # Save for history
-                  response += line
-                end
-                
-                # Stop spinner if no output received
-                unless first_output
+                # Close stdin since we don't need it
+                stdin.close
+
+                # Read output as it comes in raw mode
+                while chunk = stdout.readpartial(4096)
                   spinner.stop
-                  spinner_thread.kill
+                  print chunk
+                  response += chunk
                 end
-                
-                # Check exit status
-                unless wait_thr.value.success?
-                  error = stderr.read
-                  say "\nError: #{error}", :red
-                  next
-                end
+              rescue EOFError
+                # Expected when stream ends
               end
+
+              spinner.stop
               
               # Add successful response to history
               chat_history << {
@@ -144,7 +127,6 @@ module PocketcastCLI
               say "\n"
             rescue => e
               spinner&.stop
-              spinner_thread&.kill
               say "\nError: #{e.message}", :red
             end
           rescue => e
