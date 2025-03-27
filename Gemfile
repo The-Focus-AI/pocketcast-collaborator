@@ -15,3 +15,4 @@ gem 'pastel'      # For colors
 gem "reverse_markdown", "~> 3.0"
 
 gem "tty-progressbar", "~> 0.18.3"
+gem 'tty-spinner'

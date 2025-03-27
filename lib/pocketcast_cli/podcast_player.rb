@@ -31,6 +31,11 @@ module PocketcastCLI
       @transcript_scroll_offset = 0
       @last_check_time = nil
       
+      # Chat support
+      @chat_mode = false
+      @chat_input = ""
+      @chat_history = []
+      
       # UI layout tracking
       @player_height = 8  # Height for player controls
     end
@@ -60,12 +65,17 @@ module PocketcastCLI
         break if @exit_requested
         sleep 0.1  # Prevent CPU spinning
       end
-      
-      # Ensure everything is cleaned up
-      stop_playback
+    rescue => e
+      # Ensure cleanup happens even on errors
       cleanup_player
       cleanup_transcription
-      print @cursor.show  # Show the cursor before exiting
+      print @cursor.show  # Show cursor
+      raise e  # Re-raise the error after cleanup
+    ensure
+      # Normal cleanup path
+      cleanup_player
+      cleanup_transcription
+      print @cursor.show  # Show cursor
     end
 
     def handle_keyboard_event(char)
@@ -84,22 +94,51 @@ module PocketcastCLI
         page_transcript_up if @transcript
       when "\e[6~"  # Page Down
         page_transcript_down if @transcript
+      when "c"  # Chat mode
+        enter_chat_mode if @transcript
       when "q", "\u0003"  # q or Ctrl-C
         stop_playback if @playing
         @exit_requested = true
       end
     end
 
-    def page_transcript_up
-      visible_lines = TTY::Screen.height - @player_height - 3  # Account for player and status bar
-      @transcript_scroll_offset = [@transcript_scroll_offset - visible_lines, 0].max
+    def enter_chat_mode
+      return unless @transcript  # Guard against missing transcript
+      
+      # Create a new chat command instance with the episode object
+      chat = Commands::Chat.new([@episode.uuid]) 
+      
+      # Clear screen for chat
+      print @cursor.clear_screen
+      print @cursor.show
+      
+      begin
+        # Ensure transcript exists before starting chat
+        chat.check_transcript
+        
+        # Stop playback while in chat mode
+        was_playing = @playing
+        stop_playback if @playing
+        
+        # Start chat session
+        chat.start_chat
+        
+        # Restore playback if it was playing
+        if was_playing
+          @playing = start_playback
+        end
+      rescue => e
+        # On chat error, ensure we restore the player screen and state
+        print @cursor.hide
+        render
+        raise e  # Re-raise the error after restoring screen
+      end
+      
+      # Restore player screen
+      print @cursor.hide
+      render
     end
 
-    def page_transcript_down
-      visible_lines = TTY::Screen.height - @player_height - 3
-      max_offset = @transcript.length - visible_lines
-      @transcript_scroll_offset = [@transcript_scroll_offset + visible_lines, max_offset].min
-    end
 
     def render_metadata(width, height)
       current_row = 0
@@ -148,8 +187,8 @@ module PocketcastCLI
       end
     end
 
-    def render_player(x, height, width)
-      current_row = 1  # Start after top margin
+    def render_player(x, width)
+      current_row = 2  # Start after status bar
       
       # Player title with transcription status
       print @cursor.move_to(x, current_row)
@@ -288,6 +327,7 @@ module PocketcastCLI
         "←/→: Seek 30s",
         "↑/↓: Navigate",
         "PgUp/PgDn: Page",
+        "c: Chat",
         "q: Back"
       ].join(" | ")
       
@@ -493,19 +533,29 @@ module PocketcastCLI
       print @cursor.clear_screen
       print @cursor.hide
       
-      # Get terminal dimensions
-      width = TTY::Screen.width
-      height = TTY::Screen.height
+      if @chat_mode
+        render_chat
+      else
+        # Get terminal size
+        width = TTY::Screen.width
+        height = TTY::Screen.height
+        
+        # Reserve space for status bar
+        status_height = 1
+        available_height = height - status_height
+        
+        # Calculate player and transcript heights
+        @player_height = 8  # Fixed height for player controls
+        transcript_height = available_height - @player_height - 1  # -1 for spacing
+        
+        # Render main sections with proper spacing
+        render_player(0, width)  # Start at line 1 to leave room for status
+        render_transcript(0, @player_height + 1, width, transcript_height)
+        render_status_bar(width, height)
+      end
       
-      # Calculate layout
-      player_y = 0
-      transcript_y = @player_height + 1
-      transcript_height = height - @player_height - 3  # Account for status bar
-      
-      # Render components
-      render_player(0, player_y, width)
-      render_transcript(0, transcript_y, width, transcript_height) if @transcript
-      render_status_bar(width, height)
+      # Flush output
+      $stdout.flush
     end
 
     def should_transcribe?

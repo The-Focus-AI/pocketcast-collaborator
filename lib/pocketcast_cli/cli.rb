@@ -1,4 +1,5 @@
 require_relative 'commands/transcribe'
+require_relative 'commands/chat'
 
 module PocketcastCLI
   class CLI < Thor
@@ -47,25 +48,14 @@ module PocketcastCLI
       puts PocketcastCLI::VERSION
     end
 
-    desc "transcribe EPISODE_ID", "Transcribe an episode's audio to text"
+    desc "transcribe EPISODE_ID", "Transcribe an episode"
     def transcribe(episode_id)
-      episode = find_episode(episode_id)
-      return unless episode
-      
-      unless episode.downloaded?
-        say "Episode must be downloaded first", :red
-        return
-      end
-      
-      say "Starting transcription of '#{episode.title}'..."
-      say "Running: llm -m gemini-2.5-pro-exp-03-25 transcribe..."
-      say "This may take a while. Waiting for first token..."
-      
-      Commands::Transcribe.new(episode).execute
-      
-      transcription = Commands::Transcribe.new(episode).current.symbolize_keys!
+      Commands::Transcribe.new([episode_id]).invoke_all
+    end
 
-      say("We have #{transcription[:items].length} items")
+    desc "chat EPISODE_ID", "Chat with an episode's transcript"
+    def chat(episode_id)
+      Commands::Chat.new([episode_id]).invoke_all
     end
 
     desc "load EPISODE_ID", "Load a transcript for an episode"
