@@ -4,7 +4,7 @@ A command-line interface for Pocketcast that adds AI-powered features like trans
 
 
 
-![Transcription Playback](demos/transcription.gif)
+![Transcription Playback](docs/images/transcription-playback.gif)
 
 ## Features
 
@@ -34,24 +34,9 @@ A command-line interface for Pocketcast that adds AI-powered features like trans
 ### 🔄 Transcript Synchronization
 Watch as the transcript automatically follows along with the audio:
 
-![Transcript Sync](demos/sync.gif)
+![Transcript Sync](docs/images/sync.gif)
 
-And here's how you can filter thought your listening history.
-
-![Episode Selection](demos/demo.gif)
-
-### 🤖 AI Chat & Content Analysis
-- Interactive chat interface for discussing podcast content
-- Context-aware follow-up questions about the transcript
-- Natural language conversation with the podcast content
-- Real-time streaming of AI responses
-- Clean interface with thinking state indicators
-
-### 🔄 Automatic Pocketcasts Sync
-- Seamless synchronization with your Pocketcasts library
-- Background updates for new episodes and changes
-- Automatic state management and error handling
-- Real-time status indicators for sync progress
+![Episode Selection](docs/images/episode-select.gif)
 
 ## Requirements
 
@@ -77,7 +62,8 @@ And here's how you can filter thought your listening history.
 
 3. We look for pocketcast credientials in 1password
    ```bash
-   op item get pocketcasts.com --format json'
+   cp config/pocketcast.yml.example config/pocketcast.yml
+   # Edit config/pocketcast.yml with your credentials
    ```
 
 ## Usage
@@ -103,12 +89,6 @@ bin/pocketcast
 - `PgUp/PgDn` Scroll transcript pages
 - `q` Quit
 
-### Chat Commands
-- `c` Start a chat about the current episode
-- Enter your questions about the podcast content
-- Follow-up questions maintain context
-- Empty line or `q` to exit chat mode
-
 ## How It Works
 
 1. **Episode Management**: 
@@ -128,18 +108,6 @@ bin/pocketcast
    - Displays real-time progress during transcription
    - Saves transcripts for future playback
    - Synchronizes transcript display with audio position
-
-4. **Chat & Analysis**: 
-   - Uses llm to enable natural conversations about podcast content
-   - Maintains context for follow-up questions
-   - Streams responses in real-time
-   - Provides deep insights into podcast content
-
-5. **Automatic Syncing**:
-   - Maintains real-time connection with Pocketcasts
-   - Updates episode status and metadata automatically
-   - Handles background syncing efficiently
-   - Provides status updates for sync progress
 
 ## Project Background
 

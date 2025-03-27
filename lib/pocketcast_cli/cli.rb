@@ -50,11 +50,13 @@ module PocketcastCLI
 
     desc "transcribe EPISODE_ID", "Transcribe an episode"
     def transcribe(episode_id)
-      Commands::Transcribe.new([episode_id]).invoke_all
+      episode = find_episode(episode_id)
+      Commands::Transcribe.new(episode).invoke_all
     end
 
     desc "chat EPISODE_ID", "Chat with an episode's transcript"
     def chat(episode_id)
+      episode = find_episode(episode_id)
       Commands::Chat.new([episode_id]).invoke_all
     end
 
