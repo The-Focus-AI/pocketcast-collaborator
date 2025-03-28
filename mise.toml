@@ -1,2 +1,6 @@
 [tools]
 ruby = "latest"
+
+[tasks.llm-dump]
+description = 'Runs repomix'
+run = ['npx repomix --ignore "**/*.log,tmp/*,**.json,**.cast"']

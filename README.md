@@ -4,39 +4,62 @@ A command-line interface for Pocketcast that adds AI-powered features like trans
 
 
 
-![Transcription Playback](docs/images/transcription-playback.gif)
+![Transcription Playback](demos/transcription.gif)
 
 ## Features
 
 ### 🎧 Podcast Episode Management
-- Browse and search your Pocketcast episodes by title, podcast name, or content
-- Filter episodes by status (downloaded, starred, archived)
-- Sort episodes by date, duration, or podcast name
-- Quick episode selection with UUID shortcuts
-- Download episodes for offline listening
-- Star/unstar episodes for easy reference
-- View detailed episode metadata and show notes
+- Browse and search your Pocketcast episodes with a beautiful terminal UI
+- Interactive real-time search with `/` key and live filtering
+- Quick filter cycling with `f` key (All → Downloaded → Starred → Archived → Transcribed)
+- Multiple sorting options with `s` key:
+  - Date (newest first)
+  - Duration (longest/shortest first)
+  - Podcast name
+- Toggle starring with `*` key
+- Automatic downloads when playing episodes
+- Episode ID display for reference and debugging
+- Detailed show notes with HTML formatting stripped
+- Status indicators for downloaded (↓), starred (★), and transcribed (T) episodes
+- Real-time episode list updates during search and filtering
 
 ### 🎵 Audio Playback
-- Play/pause with spacebar
+- Play/pause with Enter key
 - Skip forward/backward 30 seconds with arrow keys
 - Real-time progress bar and duration display
+- Automatic download handling before playback
 - Uses ffmpeg for reliable audio extraction and seeking
 - Clean process management for reliable playback
+- Status bar with playback controls and current state
+- Download progress indicator with percentage
 
 ### 📝 AI Transcription & Sync
-- Real-time transcription of episodes using Google's Gemini API
-- Live display of transcription progress
-- Synchronized highlighting of current segment during playback
+- Automatic transcription when playing downloaded episodes
+- Uses Google's Gemini API with specific model selection
+- Real-time progress tracking during transcription
+- Live segment updates as transcription progresses
+- Highlighted current segment during playback
 - Navigate transcript with Up/Down and PgUp/PgDn keys
-- Automatic scrolling keeps current segment visible
+- Smart scrolling with 1/3 past, 2/3 future context ratio
+- Scroll indicators (↑/↓) when more content is available
+- Dimmed past segments for better context
+
+### 💬 Chat Functionality
+- Interact with episode transcripts through chat interface
+- Automatically enables when transcript is complete
+- Clear status indicators showing chat availability
+- Maintains context about episode content
+- Preserves playback state during chat sessions
+- Press 'c' to enter chat mode when transcript is ready
 
 ### 🔄 Transcript Synchronization
 Watch as the transcript automatically follows along with the audio:
 
-![Transcript Sync](docs/images/sync.gif)
+![Transcript Sync](demos/sync.gif)
 
-![Episode Selection](docs/images/episode-select.gif)
+Selecting and episode.
+
+![Episode Selection](demos/demo.gif)
 
 ## Requirements
 
@@ -60,11 +83,8 @@ Watch as the transcript automatically follows along with the audio:
    pip install llm-gemini
    ```
 
-3. We look for pocketcast credientials in 1password
-   ```bash
-   cp config/pocketcast.yml.example config/pocketcast.yml
-   # Edit config/pocketcast.yml with your credentials
-   ```
+3. We look for pocketcast credentials in 1password
+
 
 ## Usage
 
@@ -74,40 +94,49 @@ bin/pocketcast
 ```
 
 ### Episode Management Commands
-- `f` Filter episodes (downloaded, starred, archived)
-- `s` Search episodes by title or content
-- `o` Change sort order (date, duration, podcast)
-- `r` Refresh episode list
-- `d` Download selected episode
-- `*` Toggle star on selected episode
+- `f` Cycle through filter options (All → Downloaded → Starred → Archived → Transcribed)
+- `*` Toggle starred status for current episode
+- `s` Cycle through sort options (Date → Duration → Duration Asc → Podcast)
+- `/` Start interactive real-time search
+  - Search by title or podcast name
+  - Up/Down arrows to navigate results while searching
+  - Enter to select, Escape to cancel
+  - Special searches: "longest" (top 10% longest), "shortest" (top 10% shortest)
+- `r` Refresh episode list from Pocketcast
+- `↑/↓` or `k/j` Navigate through episodes
+- `Enter` Select and play episode
+- `q` Quit current view
 
 ### Playback Commands
-- `↵` Play/Pause
-- `←` Skip back 30 seconds
-- `→` Skip forward 30 seconds
+- `Enter` Play/Pause
+- `←/→` Skip backward/forward 30 seconds
 - `↑/↓` Navigate transcript segments
 - `PgUp/PgDn` Scroll transcript pages
-- `q` Quit
+- `c` Open chat interface (when transcript is available)
+- `q` Quit current view/player
 
 ## How It Works
 
 1. **Episode Management**: 
    - Connects to your Pocketcast account to access your episodes
    - Maintains a local cache for quick filtering and searching
-   - Supports complex filtering combinations (e.g., starred and downloaded)
-   - Quick episode access via UUID prefixes
+   - Supports complex filtering combinations
+   - Real-time search with instant results
+   - Smart sorting with proper handling of missing data
 
 2. **Audio Processing**:
    - Uses ffmpeg to extract audio segments for precise seeking
    - Handles various audio formats and bitrates automatically
    - Provides accurate playback position for transcript sync
    - Enables instant seeking without re-buffering
+   - Clean process management for reliable playback
 
 3. **Transcription**: 
    - Automatically transcribes downloaded episodes using Google's Gemini API
    - Displays real-time progress during transcription
    - Saves transcripts for future playback
    - Synchronizes transcript display with audio position
+   - Smart scrolling to maintain context while reading
 
 ## Project Background
 
@@ -119,8 +148,48 @@ Using Claude in Cursor, we were able to rapidly:
 3. Add audio playback with ffmpeg
 4. Integrate real-time transcription
 5. Create a synchronized transcript display
+6. Add intelligent search and filtering
+7. Implement smart scrolling and navigation
 
 Check the [WORKLOG.md](WORKLOG.md) for the detailed development timeline and progress.
+
+## Architecture
+
+The codebase follows a clean, modular architecture with clear separation of concerns:
+
+```
+lib/pocketcast_cli/
+├── commands/          # UI and CLI components (presentation layer)
+│   ├── chat.rb        # Chat command interface
+│   ├── cli_command.rb # Main CLI command hub
+│   ├── episode_selector_command.rb # Episode browsing interface
+│   ├── podcast_player.rb # Audio player interface
+│   └── transcribe.rb  # Transcription command
+├── models/            # Data models (domain layer)
+│   ├── episode.rb     # Episode data representation
+│   └── transcript.rb  # Transcript data handling
+└── services/          # Business logic (service layer)
+    ├── chat_service.rb         # Chat interaction business logic
+    ├── episode_service.rb      # Episode management services
+    ├── path_service.rb         # Centralized file path handling
+    ├── player_service.rb       # Audio playback functionality
+    ├── pocketcast_service.rb   # API integration with Pocketcast
+    └── transcription_service.rb # Transcript generation logic
+```
+
+Key architectural principles:
+- **Service-Oriented Design**: Core business logic is encapsulated in dedicated service classes
+- **Dependency Injection**: Services are passed as dependencies rather than instantiated directly
+- **Clean Command Pattern**: UI commands act as thin wrappers around service layer
+- **Clear Responsibility Boundaries**: Each component has a single, well-defined responsibility
+- **Avoidance of Circular Dependencies**: Services maintain clear unidirectional relationships
+
+Benefits of this architecture:
+- Easier addition of new features and commands
+- Isolated testing of business logic
+- Improved maintainability with proper separation
+- Better component reuse across different UI elements
+- Enhanced stability through clear boundaries
 
 ## Contributing
 

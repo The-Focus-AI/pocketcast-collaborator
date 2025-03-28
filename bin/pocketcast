@@ -10,4 +10,4 @@ Signal.trap("INT") do
   exit
 end
 
-PocketcastCLI::CLI.start(ARGV) 
+PocketcastCLI::Commands::CLI.start(ARGV)
