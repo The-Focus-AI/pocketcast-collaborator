@@ -13,6 +13,7 @@ gem 'tty-box'     # For drawing boxes
 gem 'tty-reader'  # For keyboard input
 gem 'pastel'      # For colors 
 gem "reverse_markdown", "~> 3.0"
+gem "tty-markdown" # For markdown rendering
 
 gem "tty-progressbar", "~> 0.18.3"
 gem 'tty-spinner'

@@ -1,6 +1,8 @@
 require 'tty-spinner'
 require 'open3'
 require 'pastel'
+require 'tty-markdown'
+require 'tty-screen'
 
 module PocketcastCLI
   module Services
@@ -90,6 +92,9 @@ module PocketcastCLI
             # Close stdin since we don't need it
             stdin.close
             
+            # Set proper encoding for stdout
+            stdout.set_encoding('UTF-8')
+            
             # Read output as it comes in raw mode
             while chunk = stdout.readpartial(4096)
               spinner.stop if spinner.spinning?
@@ -101,6 +106,23 @@ module PocketcastCLI
           end
           
           spinner.stop if spinner.spinning?
+
+          # Show the raw markdown first
+          output_stream.puts "\n\n#{@pastel.cyan("Raw markdown:")}"
+          output_stream.puts response.encode('UTF-8', invalid: :replace, undef: :replace, replace: '?')
+          
+          # Add a line break before showing formatted version
+          output_stream.puts "\n#{@pastel.cyan("Formatted response:")}\n"
+          
+          # Calculate available width for word wrapping, leaving some margin
+          width = TTY::Screen.width - 4
+          
+          # Format the response with proper encoding
+          formatted_response = response.encode('UTF-8', invalid: :replace, undef: :replace, replace: '?').strip
+          
+          # Show formatted markdown version with some padding
+          output_stream.puts TTY::Markdown.parse(formatted_response, width: width) + "\n"
+          
           return response
         rescue => e
           spinner.stop if spinner.spinning?
