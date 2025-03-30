@@ -555,16 +555,26 @@ module PocketcastCLI
           if new_index != @current_transcript_index
             @current_transcript_index = new_index
             
-            # Calculate desired scroll position to maintain 1/3 past, 2/3 future ratio
-            visible_height = TTY::Screen.height - @player_height - 3  # Adjust for player and margins
-            past_context = (visible_height * 0.33).to_i  # Show 1/3 of what was said
+            # Calculate visible height (subtract player controls and margins)
+            visible_height = TTY::Screen.height - @player_height - 3
             
-            # Calculate ideal scroll position
+            # Calculate desired context
+            past_context = (visible_height * 0.33).to_i  # Show 1/3 of what was said
+            future_context = visible_height - past_context  # Remaining 2/3 for what's coming
+            
+            # Calculate ideal scroll position to maintain ratio
             ideal_scroll = [@current_transcript_index - past_context, 0].max
             
             # Ensure we don't scroll too far (leave room for future content)
             max_scroll = [@transcript.length - visible_height, 0].max
             @transcript_scroll_offset = [ideal_scroll, max_scroll].min
+            
+            # If we're near the end, adjust scroll to show remaining content
+            remaining_lines = @transcript.length - @current_transcript_index
+            if remaining_lines < future_context
+              # Scroll back to show more past context if we're near the end
+              @transcript_scroll_offset = [max_scroll - (future_context - remaining_lines), 0].max
+            end
           end
         end
       end

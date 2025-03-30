@@ -4,7 +4,7 @@ A command-line interface for Pocketcast that adds AI-powered features like trans
 
 
 
-![Transcription Playback](demos/transcription.gif)
+![Transcription Playback](demos/demo.gif)
 
 ## Features
 
@@ -53,13 +53,8 @@ A command-line interface for Pocketcast that adds AI-powered features like trans
 - Press 'c' to enter chat mode when transcript is ready
 
 ### 🔄 Transcript Synchronization
-Watch as the transcript automatically follows along with the audio:
+Watch as the transcript automatically follows along with the audio
 
-![Transcript Sync](demos/sync.gif)
-
-Selecting and episode.
-
-![Episode Selection](demos/demo.gif)
 
 ## Requirements
 
