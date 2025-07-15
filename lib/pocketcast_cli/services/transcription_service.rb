@@ -35,7 +35,7 @@ module PocketcastCLI
           start_time = Time.now
           
           # Use the exact command format as specified
-          command = "llm -m gemini-2.5-pro-exp-03-25 -a #{Shellwords.escape(episode.download_path)} --schema-multi 'timestamp str: mm:ss,text,speaker' transcript > #{Shellwords.escape(@transcript.path)}"
+            command = "llm -m gemini-2.5-pro-exp-03-25 -a #{Shellwords.escape(episode.download_path)} --schema-multi 'timestamp str: mm:ss,text,speaker' transcript > #{Shellwords.escape(@transcript.path)}"
           
           def log(msg, wrapper)
             wrapper.is_a?(Array) ? wrapper << msg : wrapper.puts(msg)
